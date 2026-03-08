@@ -1,0 +1,109 @@
+----------------------------------------------------------------------
+-- ANALYTICS LAYER 5: PATIENT EXPERIENCE IMPACT ANALYSIS
+-- Links HCAHPS patient satisfaction with readmission outcomes
+-- and cost for payer value-based incentive program design
+----------------------------------------------------------------------
+CREATE OR REPLACE TABLE HEALTHCARE_DB.ANALYTICS_SCHEMA.ANALYTICS_PATIENT_EXPERIENCE_IMPACT AS
+WITH survey_pivoted AS (
+    SELECT
+        FACILITY_ID,
+        MAX(CASE WHEN MEASURE_ID = 'H_HSP_RATING_STAR_RATING'  THEN STAR_RATING END)   AS OVERALL_STAR_RATING,
+        MAX(CASE WHEN MEASURE_ID = 'H_COMP_1_STAR_RATING'      THEN STAR_RATING END)   AS NURSE_COMM_STAR,
+        MAX(CASE WHEN MEASURE_ID = 'H_COMP_2_STAR_RATING'      THEN STAR_RATING END)   AS DOCTOR_COMM_STAR,
+        MAX(CASE WHEN MEASURE_ID = 'H_COMP_5_STAR_RATING'      THEN STAR_RATING END)   AS MED_COMM_STAR,
+        MAX(CASE WHEN MEASURE_ID = 'H_COMP_6_STAR_RATING'      THEN STAR_RATING END)   AS DISCHARGE_INFO_STAR,
+        MAX(CASE WHEN MEASURE_ID = 'H_CLEAN_STAR_RATING'       THEN STAR_RATING END)   AS CLEANLINESS_STAR,
+        MAX(CASE WHEN MEASURE_ID = 'H_HSP_RATING_9_10'         THEN ANSWER_PERCENT END) AS PCT_RATING_9_OR_10,
+        MAX(CASE WHEN MEASURE_ID = 'H_HSP_RATING_0_6'          THEN ANSWER_PERCENT END) AS PCT_RATING_0_TO_6,
+        MAX(CASE WHEN MEASURE_ID = 'H_RECMND_DY'               THEN ANSWER_PERCENT END) AS PCT_WOULD_RECOMMEND,
+        MAX(CASE WHEN MEASURE_ID = 'H_RECMND_DN'               THEN ANSWER_PERCENT END) AS PCT_WOULD_NOT_RECOMMEND,
+        MAX(COMPLETED_SURVEYS)                                                            AS COMPLETED_SURVEYS,
+        MAX(RESPONSE_RATE_PCT)                                                            AS SURVEY_RESPONSE_RATE
+    FROM HEALTHCARE_DB.TRANSFORM_SCHEMA.TRANSFORMED_PATIENT_SURVEY
+    GROUP BY FACILITY_ID
+),
+readmission_agg AS (
+    SELECT
+        FACILITY_ID,
+        ROUND(AVG(EXCESS_READMISSION_RATIO), 4)                        AS AVG_EXCESS_READMISSION_RATIO,
+        SUM(ESTIMATED_EXCESS_READMISSIONS)                              AS TOTAL_EXCESS_READMISSIONS,
+        COUNT(CASE WHEN PENALTY_STATUS = 'Penalized (Above Expected)' THEN 1 END) AS CONDITIONS_PENALIZED
+    FROM HEALTHCARE_DB.TRANSFORM_SCHEMA.TRANSFORMED_READMISSION_METRICS
+    GROUP BY FACILITY_ID
+)
+SELECT
+    f.FACILITY_ID,
+    f.FACILITY_NAME,
+    f.STATE,
+    f.HOSPITAL_TYPE,
+    f.PAYER_NETWORK_TIER,
+
+    sp.OVERALL_STAR_RATING,
+    sp.NURSE_COMM_STAR,
+    sp.DOCTOR_COMM_STAR,
+    sp.MED_COMM_STAR,
+    sp.DISCHARGE_INFO_STAR,
+    sp.CLEANLINESS_STAR,
+    sp.PCT_RATING_9_OR_10,
+    sp.PCT_RATING_0_TO_6,
+    sp.PCT_WOULD_RECOMMEND,
+    sp.PCT_WOULD_NOT_RECOMMEND,
+    sp.COMPLETED_SURVEYS,
+    sp.SURVEY_RESPONSE_RATE,
+
+    r.AVG_EXCESS_READMISSION_RATIO,
+    r.TOTAL_EXCESS_READMISSIONS,
+    r.CONDITIONS_PENALIZED,
+
+    c.SPENDING_RATIO                                                    AS MSPB_SPENDING_RATIO,
+    c.COST_EFFICIENCY_TIER,
+
+    CASE
+        WHEN sp.OVERALL_STAR_RATING >= 4 AND COALESCE(r.AVG_EXCESS_READMISSION_RATIO, 1) <= 1.0
+            THEN 'High Satisfaction / Low Readmission'
+        WHEN sp.OVERALL_STAR_RATING >= 4 AND COALESCE(r.AVG_EXCESS_READMISSION_RATIO, 1) > 1.0
+            THEN 'High Satisfaction / High Readmission'
+        WHEN sp.OVERALL_STAR_RATING <= 2 AND COALESCE(r.AVG_EXCESS_READMISSION_RATIO, 1) <= 1.0
+            THEN 'Low Satisfaction / Low Readmission'
+        WHEN sp.OVERALL_STAR_RATING <= 2 AND COALESCE(r.AVG_EXCESS_READMISSION_RATIO, 1) > 1.0
+            THEN 'Low Satisfaction / High Readmission'
+        ELSE 'Moderate'
+    END                                                                 AS EXPERIENCE_READMISSION_QUADRANT,
+
+    CASE
+        WHEN sp.OVERALL_STAR_RATING >= 4 AND COALESCE(c.SPENDING_RATIO, 1) <= 1.0
+            THEN 'High Satisfaction / Cost Efficient'
+        WHEN sp.OVERALL_STAR_RATING >= 4 AND COALESCE(c.SPENDING_RATIO, 1) > 1.0
+            THEN 'High Satisfaction / Cost Inefficient'
+        WHEN sp.OVERALL_STAR_RATING <= 2 AND COALESCE(c.SPENDING_RATIO, 1) <= 1.0
+            THEN 'Low Satisfaction / Cost Efficient'
+        WHEN sp.OVERALL_STAR_RATING <= 2 AND COALESCE(c.SPENDING_RATIO, 1) > 1.0
+            THEN 'Low Satisfaction / Cost Inefficient'
+        ELSE 'Moderate'
+    END                                                                 AS EXPERIENCE_COST_QUADRANT,
+
+    ROUND(
+        (COALESCE(sp.NURSE_COMM_STAR, 0)
+         + COALESCE(sp.DOCTOR_COMM_STAR, 0)
+         + COALESCE(sp.MED_COMM_STAR, 0)
+         + COALESCE(sp.DISCHARGE_INFO_STAR, 0)
+         + COALESCE(sp.CLEANLINESS_STAR, 0))
+        / NULLIF(
+            (CASE WHEN sp.NURSE_COMM_STAR IS NOT NULL THEN 1 ELSE 0 END
+             + CASE WHEN sp.DOCTOR_COMM_STAR IS NOT NULL THEN 1 ELSE 0 END
+             + CASE WHEN sp.MED_COMM_STAR IS NOT NULL THEN 1 ELSE 0 END
+             + CASE WHEN sp.DISCHARGE_INFO_STAR IS NOT NULL THEN 1 ELSE 0 END
+             + CASE WHEN sp.CLEANLINESS_STAR IS NOT NULL THEN 1 ELSE 0 END), 0)
+    , 2)                                                                AS AVG_DOMAIN_STAR_RATING,
+
+    CASE
+        WHEN sp.OVERALL_STAR_RATING >= 4
+             AND COALESCE(r.AVG_EXCESS_READMISSION_RATIO, 1) <= 1.0
+             AND COALESCE(c.SPENDING_RATIO, 1) <= 1.0                   THEN 'Eligible'
+        ELSE 'Not Eligible'
+    END                                                                 AS VBP_INCENTIVE_ELIGIBILITY
+
+FROM HEALTHCARE_DB.TRANSFORM_SCHEMA.TRANSFORMED_FACILITIES f
+LEFT JOIN survey_pivoted sp           ON f.FACILITY_ID = sp.FACILITY_ID
+LEFT JOIN readmission_agg r           ON f.FACILITY_ID = r.FACILITY_ID
+LEFT JOIN HEALTHCARE_DB.TRANSFORM_SCHEMA.TRANSFORMED_COST_ANALYTICS c ON f.FACILITY_ID = c.FACILITY_ID;

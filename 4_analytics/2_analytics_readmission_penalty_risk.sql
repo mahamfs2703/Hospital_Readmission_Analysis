@@ -1,0 +1,76 @@
+----------------------------------------------------------------------
+-- ANALYTICS LAYER 2: READMISSION PENALTY RISK DEEP-DIVE
+-- Condition-level and state-level readmission penalty analysis
+-- for payer cost exposure and HRRP penalty forecasting
+----------------------------------------------------------------------
+CREATE OR REPLACE TABLE HEALTHCARE_DB.ANALYTICS_SCHEMA.ANALYTICS_READMISSION_PENALTY_RISK AS
+WITH facility_info AS (
+    SELECT FACILITY_ID, FACILITY_NAME, HOSPITAL_TYPE, HOSPITAL_OWNERSHIP, PAYER_NETWORK_TIER
+    FROM HEALTHCARE_DB.TRANSFORM_SCHEMA.TRANSFORMED_FACILITIES
+)
+SELECT
+    r.FACILITY_ID,
+    fi.FACILITY_NAME,
+    r.STATE,
+    fi.HOSPITAL_TYPE,
+    fi.HOSPITAL_OWNERSHIP,
+    fi.PAYER_NETWORK_TIER,
+    r.CONDITION_CATEGORY,
+    r.NUMBER_OF_DISCHARGES,
+    r.NUMBER_OF_READMISSIONS,
+    r.EXCESS_READMISSION_RATIO,
+    r.PREDICTED_READMISSION_RATE,
+    r.EXPECTED_READMISSION_RATE,
+    r.READMISSION_RATE_VARIANCE,
+    r.PENALTY_STATUS,
+    r.PAYER_RISK_TIER,
+    r.ESTIMATED_EXCESS_READMISSIONS,
+
+    ROUND(
+        CASE
+            WHEN r.NUMBER_OF_DISCHARGES > 0 AND r.NUMBER_OF_READMISSIONS IS NOT NULL
+            THEN (r.NUMBER_OF_READMISSIONS * 1.0 / r.NUMBER_OF_DISCHARGES) * 100
+            ELSE NULL
+        END, 2)                                                         AS ACTUAL_READMISSION_RATE,
+
+    ROUND(
+        CASE
+            WHEN r.EXCESS_READMISSION_RATIO > 1.0
+            THEN (r.EXCESS_READMISSION_RATIO - 1.0) * COALESCE(r.NUMBER_OF_DISCHARGES, 0) * 15000
+            ELSE 0
+        END, 2)                                                         AS ESTIMATED_PAYER_COST_EXPOSURE,
+
+    PERCENT_RANK() OVER (
+        PARTITION BY r.CONDITION_CATEGORY
+        ORDER BY r.EXCESS_READMISSION_RATIO
+    )                                                                   AS READMISSION_PERCENTILE_RANK,
+
+    r.MEASUREMENT_START_DATE,
+    r.MEASUREMENT_END_DATE
+
+FROM HEALTHCARE_DB.TRANSFORM_SCHEMA.TRANSFORMED_READMISSION_METRICS r
+LEFT JOIN facility_info fi ON r.FACILITY_ID = fi.FACILITY_ID;
+
+
+----------------------------------------------------------------------
+-- ANALYTICS LAYER 2B: STATE-LEVEL READMISSION PENALTY SUMMARY
+----------------------------------------------------------------------
+CREATE OR REPLACE TABLE HEALTHCARE_DB.ANALYTICS_SCHEMA.ANALYTICS_STATE_READMISSION_SUMMARY AS
+SELECT
+    STATE,
+    CONDITION_CATEGORY,
+    COUNT(DISTINCT FACILITY_ID)                                         AS TOTAL_HOSPITALS,
+    COUNT(CASE WHEN PENALTY_STATUS = 'Penalized (Above Expected)' THEN 1 END) AS HOSPITALS_PENALIZED,
+    ROUND(AVG(EXCESS_READMISSION_RATIO), 4)                            AS AVG_EXCESS_READMISSION_RATIO,
+    ROUND(AVG(PREDICTED_READMISSION_RATE), 2)                          AS AVG_PREDICTED_RATE,
+    ROUND(AVG(EXPECTED_READMISSION_RATE), 2)                           AS AVG_EXPECTED_RATE,
+    SUM(NUMBER_OF_DISCHARGES)                                           AS TOTAL_DISCHARGES,
+    SUM(NUMBER_OF_READMISSIONS)                                         AS TOTAL_READMISSIONS,
+    SUM(ESTIMATED_EXCESS_READMISSIONS)                                  AS TOTAL_EXCESS_READMISSIONS,
+    ROUND(
+        COUNT(CASE WHEN PENALTY_STATUS = 'Penalized (Above Expected)' THEN 1 END) * 100.0
+        / NULLIF(COUNT(DISTINCT FACILITY_ID), 0)
+    , 2)                                                                AS PCT_HOSPITALS_PENALIZED
+FROM HEALTHCARE_DB.TRANSFORM_SCHEMA.TRANSFORMED_READMISSION_METRICS
+WHERE CONDITION_CATEGORY IS NOT NULL
+GROUP BY STATE, CONDITION_CATEGORY;
