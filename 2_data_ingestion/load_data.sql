@@ -1,0 +1,91 @@
+CREATE OR REPLACE FILE FORMAT Healthcare_DB.RAW_SCHEMA.CMS_CSV_FORMAT
+    TYPE = 'CSV'
+    FIELD_DELIMITER = ','
+    -- Skip the header row
+    SKIP_HEADER = 1 
+    -- Strictly handle commas inside "Quoted, Names"
+    FIELD_OPTIONALLY_ENCLOSED_BY = '"' 
+    -- Map all variations of missing data to NULL
+    NULL_IF = ('Not Available', 'N/A', 'Too Few to Report', 'None', '')
+    -- Handle the standard CMS date format
+    DATE_FORMAT = 'MM/DD/YYYY'
+    -- Ignore extra columns at the end of rows if they occur
+    ERROR_ON_COLUMN_COUNT_MISMATCH = FALSE
+    -- Clean up whitespace
+    TRIM_SPACE = TRUE
+    REPLACE_INVALID_CHARACTERS = TRUE
+    EMPTY_FIELD_AS_NULL = TRUE;
+USE DATABASE Healthcare_DB;
+USE SCHEMA Healthcare_DB.RAW_SCHEMA;
+    -- Hospital General Information
+COPY INTO "HEALTHCARE_DB"."RAW_SCHEMA"."FACILITIES"
+FROM (
+    SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38
+    FROM '@"HEALTHCARE_DB"."RAW_SCHEMA"."RAW_STAGE"'
+)
+FILES = ('Hospital_General_Information.csv')
+FILE_FORMAT = Healthcare_DB.RAW_SCHEMA.CMS_CSV_FORMAT
+ON_ERROR=ABORT_STATEMENT;
+
+-- This will show you exactly WHY the last load failed (e.g., which column or row)
+--SELECT * FROM TABLE(INFORMATION_SCHEMA.COPY_HISTORY(TABLE_NAME=>'FACILITIES', START_TIME=> DATEADD(hours, -1, CURRENT_TIMESTAMP())));
+
+-- Complications and Deaths
+COPY INTO "HEALTHCARE_DB"."RAW_SCHEMA"."COMPLICATIONS_AND_DEATHS_HOSPITAL"
+FROM (
+    SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
+    FROM '@"HEALTHCARE_DB"."RAW_SCHEMA"."RAW_STAGE"'
+)
+FILES = ('Complications_and_Deaths-Hospital.csv')
+FILE_FORMAT = Healthcare_DB.RAW_SCHEMA.CMS_CSV_FORMAT
+ON_ERROR=ABORT_STATEMENT;
+
+-- HRRP
+COPY INTO "HEALTHCARE_DB"."RAW_SCHEMA"."READMISSION_METRICS"
+FROM (
+    SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+    FROM '@"HEALTHCARE_DB"."RAW_SCHEMA"."RAW_STAGE"'
+)
+FILES = ('HRRP (Hospital_Readmission_ReductionProgram).csv')
+FILE_FORMAT = Healthcare_DB.RAW_SCHEMA.CMS_CSV_FORMAT
+ON_ERROR=ABORT_STATEMENT;
+
+-- Medicare Spending
+COPY INTO "HEALTHCARE_DB"."RAW_SCHEMA"."COST_ANALYTICS"
+FROM (
+    SELECT $1, $2, $3, $4, $5, $6
+    FROM '@"HEALTHCARE_DB"."RAW_SCHEMA"."RAW_STAGE"'
+)
+FILES = ('Medicare Spending Per Beneficiary.csv')
+FILE_FORMAT = Healthcare_DB.RAW_SCHEMA.CMS_CSV_FORMAT
+ON_ERROR=ABORT_STATEMENT;
+
+
+-- Timely and Effective Care
+COPY INTO "HEALTHCARE_DB"."RAW_SCHEMA"."ENCOUNTERS"
+FROM (
+    SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
+    FROM '@"HEALTHCARE_DB"."RAW_SCHEMA"."RAW_STAGE"'
+)
+FILES = ('Timely_and_Effective_Care-Hospital.csv')
+FILE_FORMAT = Healthcare_DB.RAW_SCHEMA.CMS_CSV_FORMAT
+ON_ERROR=ABORT_STATEMENT;
+
+-- Patient Survey
+DROP TABLE Healthcare_DB.RAW_SCHEMA.PATIENT_SURVEY;
+COPY INTO "HEALTHCARE_DB"."RAW_SCHEMA"."PATIENT_SURVEY"
+FROM (
+    SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22
+    FROM '@"HEALTHCARE_DB"."RAW_SCHEMA"."RAW_STAGE"'
+)
+FILES = ('HCAHPS_Patient_Survey_Hospital.csv')
+FILE_FORMAT = Healthcare_DB.RAW_SCHEMA.CMS_CSV_FORMAT
+ON_ERROR=ABORT_STATEMENT;
+
+--VERIFY THE DATA LOAD
+SELECT * FROM "HEALTHCARE_DB"."RAW_SCHEMA"."PATIENT_SURVEY" LIMIT 10;
+SELECT * FROM "HEALTHCARE_DB"."RAW_SCHEMA"."ENCOUNTERS" LIMIT 10;
+SELECT * FROM "HEALTHCARE_DB"."RAW_SCHEMA"."COST_ANALYTICS" LIMIT 10;
+SELECT * FROM "HEALTHCARE_DB"."RAW_SCHEMA"."READMISSION_METRICS" LIMIT 10;
+SELECT * FROM "HEALTHCARE_DB"."RAW_SCHEMA"."COMPLICATIONS_AND_DEATHS_HOSPITAL" LIMIT 10;
+SELECT * FROM "HEALTHCARE_DB"."RAW_SCHEMA"."FACILITIES" LIMIT 10;
