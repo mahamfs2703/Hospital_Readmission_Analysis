@@ -1,0 +1,24 @@
+Architecture
+
+CMS DATASETS
+      │
+      ▼
+Snowflake STAGE
+      │
+      ▼
+RAW LAYER
+      │
+      ▼
+TRANSFORM LAYER
+      │
+      ▼
+ANALYTICS LAYER
+      │
+ ┌───────────────┬───────────────┐
+ ▼               ▼              ▼
+Monitoring      Streamlit      Cortex
+& Alerts        Dashboard       Agent
+      │
+      ▼
+Governance
+(tags + masking)
